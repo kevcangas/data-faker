@@ -76,9 +76,30 @@ docker compose down
 
 ### 🌐 Connecting External Consumers (Apache Flink, Spark, etc.)
 
-StreamForge exposes Kafka on port `9092` with advertised listeners mapped to your machine's LAN IP (`192.168.1.100`), allowing consumers on other computers across your local network to stream events in real time.
+StreamForge exposes Kafka on port `9092` with advertised listeners mapped either to your machine's **LAN IP** (`192.168.1.100`) or a **Pi-hole Local DNS Domain** (`kafka.homelab.internal`), allowing consumers on other computers across your local network to stream events in real time.
 
-#### 1. Network & Firewall Prerequisites
+#### 1. Pi-hole Local DNS & Custom Domain Setup (Recommended)
+Instead of hardcoding a local IP address that might change under DHCP, you can route Kafka using a custom local domain through **Pi-hole**:
+
+1. **Add DNS record in Pi-hole**:
+   - In Pi-hole Admin, navigate to **Local DNS** $\to$ **DNS Records**.
+   - **Domain**: `kafka.homelab.internal` (or `streamforge.homelab.internal`)
+   - **IP Address**: `192.168.1.100` (host PC IP running Kafka)
+2. **Set domain in `.env`**:
+   ```bash
+   KAFKA_EXTERNAL_HOST=kafka.homelab.internal
+   ```
+3. **Restart Kafka container**:
+   ```bash
+   docker compose up -d kafka
+   ```
+4. **Why direct Pi-hole DNS instead of Traefik?**:
+   - Traefik is an HTTP/HTTPS reverse proxy suited for web apps (`data-faker.homelab.internal` on port 3000 and `kafka-data-faker.homelab.internal` on port 8080).
+   - Kafka uses a binary TCP protocol without HTTP headers. Routing Kafka directly to port `9092` via Pi-hole DNS provides direct socket throughput without extra proxy overhead or TLS-SNI requirements.
+
+---
+
+#### 2. Network & Firewall Prerequisites
 On the host Windows PC running StreamForge, allow inbound connections on port `9092` (run PowerShell as Administrator):
 ```powershell
 New-NetFirewallRule -DisplayName "Kafka 9092 LAN Inbound" -Direction Inbound -LocalPort 9092 -Protocol TCP -Action Allow
@@ -86,12 +107,16 @@ New-NetFirewallRule -DisplayName "Kafka 9092 LAN Inbound" -Direction Inbound -Lo
 Verify reachability from the remote computer:
 ```bash
 curl -v telnet://192.168.1.100:9092
-# Or: nc -zv 192.168.1.100 9092
+# Or using the Pi-hole domain:
+curl -v telnet://kafka.homelab.internal:9092
 ```
 
 ---
 
-#### 2. Apache Flink Integration Examples
+#### 3. Apache Flink Integration Examples
+
+> [!TIP]
+> You can use either your Pi-hole domain (`kafka.homelab.internal:9092`) or direct LAN IP (`192.168.1.100:9092`) as the bootstrap server.
 
 ##### Option A: Flink SQL (Table API / SQL Client)
 ```sql
@@ -105,7 +130,7 @@ CREATE TABLE streamforge_orders (
 ) WITH (
     'connector' = 'kafka',
     'topic' = 'ecommerce-orders',
-    'properties.bootstrap.servers' = '192.168.1.100:9092',
+    'properties.bootstrap.servers' = 'kafka.homelab.internal:9092',
     'properties.group.id' = 'flink-sql-consumer',
     'scan.startup.mode' = 'latest-offset',
     'format' = 'json',
@@ -132,7 +157,7 @@ from pyflink.common.watermark_strategy import WatermarkStrategy
 env = StreamExecutionEnvironment.get_execution_environment()
 
 kafka_source = KafkaSource.builder() \
-    .set_bootstrap_servers("192.168.1.100:9092") \
+    .set_bootstrap_servers("kafka.homelab.internal:9092") \
     .set_topics("ecommerce-orders") \
     .set_group_id("pyflink-streamforge-group") \
     .set_starting_offsets(KafkaOffsetsInitializer.latest()) \
@@ -158,7 +183,7 @@ public class StreamForgeFlinkConsumer {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
         KafkaSource<String> source = KafkaSource.<String>builder()
-            .setBootstrapServers("192.168.1.100:9092")
+            .setBootstrapServers("kafka.homelab.internal:9092")
             .setTopics("ecommerce-orders")
             .setGroupId("flink-java-group")
             .setStartingOffsets(OffsetsInitializer.latest())
