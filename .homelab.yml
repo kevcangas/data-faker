@@ -25,6 +25,8 @@ services:
     container: streamforge-kafka
     port: 9092
     subdomain: kafka
+    publish_port: true
+    host_port: 9092
     homepage: false
     icon: si-apachekafka
     description: "Apache Kafka KRaft Message Broker"
