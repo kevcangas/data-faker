@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StreamForge • Kafka Mock Data Generator</title>
+  <meta name="description" content="High-efficiency Kafka mock data generator powered by Rust. Configure dynamic payloads, rate limiting, and real-time telemetry.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation & Header -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" fill="url(#brand-grad)"/>
+          <defs>
+            <linearGradient id="brand-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#38bdf8"/>
+              <stop offset="100%" stop-color="#818cf8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1 class="brand-title">StreamForge</h1>
+        <span class="brand-subtitle">High-Efficiency Kafka Data Producer (Rust Engine)</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <!-- Broker Status Badge -->
+      <div id="broker-status-card" class="status-badge checking">
+        <span class="status-dot"></span>
+        <span id="broker-status-text">Checking Broker...</span>
+        <button id="btn-test-connection" class="btn-icon" title="Test Kafka Connection">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M23 4v6h-6M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Engine Status Badge -->
+      <div id="job-status-badge" class="status-pill status-idle">
+        <span class="pulse-indicator"></span>
+        <span id="job-status-text">IDLE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Live Telemetry KPI Bar -->
+  <section class="telemetry-bar">
+    <div class="kpi-card" id="kpi-sent-card">
+      <div class="kpi-label">TOTAL SENT</div>
+      <div class="kpi-value text-cyan" id="metric-sent">0</div>
+      <div class="kpi-subtext" id="metric-target-progress">of ∞ messages</div>
+    </div>
+
+    <div class="kpi-card" id="kpi-rate-card">
+      <div class="kpi-label">CURRENT THROUGHPUT</div>
+      <div class="kpi-value text-emerald" id="metric-rate">0.0 <span class="kpi-unit">msg/s</span></div>
+      <div class="kpi-subtext" id="metric-rate-target">Target: 100 msg/s</div>
+    </div>
+
+    <div class="kpi-card" id="kpi-failed-card">
+      <div class="kpi-label">FAILED DELIVERIES</div>
+      <div class="kpi-value text-rose" id="metric-failed">0</div>
+      <div class="kpi-subtext" id="metric-error-rate">0.0% error rate</div>
+    </div>
+
+    <div class="kpi-card" id="kpi-time-card">
+      <div class="kpi-label">ELAPSED TIME</div>
+      <div class="kpi-value text-amber" id="metric-elapsed">00:00:00</div>
+      <div class="kpi-subtext">Active execution</div>
+    </div>
+
+    <div class="kpi-card chart-mini-card">
+      <div class="kpi-label">THROUGHPUT TREND</div>
+      <canvas id="sparkline-chart" width="180" height="42"></canvas>
+    </div>
+  </section>
+
+  <!-- Progress Bar Line -->
+  <div class="progress-track">
+    <div id="progress-bar-fill" class="progress-fill" style="width: 0%;"></div>
+  </div>
+
+  <!-- Main Workspace Grid -->
+  <main class="workspace-grid">
+    <!-- Left Column: Parameters & Controls -->
+    <div class="config-column">
+      <!-- Master Action Controls -->
+      <div class="panel control-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Mission Control</h2>
+          <span class="panel-tag">Rust Async Worker Pool</span>
+        </div>
+        <div class="control-buttons">
+          <button id="btn-start-job" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Start Stream
+          </button>
+          <button id="btn-pause-job" class="btn btn-secondary" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+            </svg>
+            Pause
+          </button>
+          <button id="btn-stop-job" class="btn btn-danger" disabled>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <rect x="5" y="5" width="14" height="14" rx="2"/>
+            </svg>
+            Stop
+          </button>
+          <button id="btn-reset-job" class="btn btn-ghost" title="Reset Statistics">
+            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+            </svg>
+          </button>
+        </div>
+        <div id="status-alert-box" class="alert-box alert-hidden">
+          <span id="status-alert-text"></span>
+        </div>
+      </div>
+
+      <!-- Transmission Volume & Rate Settings -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Rate & Volume Parameters</h2>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="rate-mode-select">Rate Throttling Mode</label>
+          <div class="segmented-control">
+            <button type="button" class="segment-btn active" data-mode="msg_per_sec">Messages / Second</button>
+            <button type="button" class="segment-btn" data-mode="interval_ms">Interval Delay (ms)</button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label" id="rate-value-label" for="input-rate-value">Target Throughput (msg/s)</label>
+            <input type="number" id="input-rate-value" class="form-input" min="1" max="100000" value="100">
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="input-quick-slider">Rate Slider</label>
+            <input type="range" id="input-quick-slider" class="form-range" min="1" max="2000" value="100">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="stream-mode-select">Execution Limit</label>
+          <div class="segmented-control" id="limit-control">
+            <button type="button" class="segment-btn active" data-limit="continuous">Continuous Stream (∞)</button>
+            <button type="button" class="segment-btn" data-limit="fixed">Fixed Message Count</button>
+          </div>
+        </div>
+
+        <div class="form-group hidden" id="fixed-count-container">
+          <label class="form-label" for="input-total-messages">Total Messages Count</label>
+          <input type="number" id="input-total-messages" class="form-input" min="1" max="50000000" value="1000" placeholder="e.g. 5000">
+        </div>
+      </div>
+
+      <!-- Kafka Connection & Broker Tuning -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Kafka Cluster Configuration</h2>
+          <button type="button" id="toggle-advanced-kafka" class="btn-text">Advanced Options ▾</button>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label class="form-label" for="input-bootstrap-servers">Bootstrap Brokers</label>
+            <input type="text" id="input-bootstrap-servers" class="form-input" value="kafka:9092" placeholder="kafka:9092 or localhost:9092">
+          </div>
+          <div class="form-group flex-2">
+            <label class="form-label" for="input-topic">Topic Name</label>
+            <input type="text" id="input-topic" class="form-input" value="mock-events" placeholder="events-topic">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label" for="select-key-strategy">Partition Key Strategy</label>
+            <select id="select-key-strategy" class="form-select">
+              <option value="none">Round-Robin (No Key)</option>
+              <option value="random_uuid">Random UUID per message</option>
+              <option value="extract_field">Extract from Payload JSON field</option>
+              <option value="static">Static Fixed Key</option>
+            </select>
+          </div>
+          <div class="form-group flex-1 hidden" id="key-field-container">
+            <label class="form-label" id="key-field-label" for="input-key-value">Field Name</label>
+            <input type="text" id="input-key-value" class="form-input" placeholder="e.g. customer_id">
+          </div>
+        </div>
+
+        <!-- Advanced Collapsible Drawer -->
+        <div id="advanced-kafka-settings" class="advanced-drawer collapsed">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label" for="select-acks">Producer ACKs</label>
+              <select id="select-acks" class="form-select">
+                <option value="1" selected>1 (Leader ACK - Balanced)</option>
+                <option value="0">0 (Fire-and-forget - Max Speed)</option>
+                <option value="all">all / -1 (Full ISR - Zero Loss)</option>
+              </select>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label" for="select-compression">Compression</label>
+              <select id="select-compression" class="form-select">
+                <option value="snappy" selected>snappy (Recommended)</option>
+                <option value="lz4">lz4 (Fastest CPU)</option>
+                <option value="zstd">zstd (Highest Ratio)</option>
+                <option value="gzip">gzip</option>
+                <option value="none">none</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label" for="input-linger-ms">Linger.ms</label>
+              <input type="number" id="input-linger-ms" class="form-input" min="0" max="1000" value="5">
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label" for="input-batch-size">Batch Size (Bytes)</label>
+              <input type="number" id="input-batch-size" class="form-input" min="1024" max="10485760" value="65536">
+            </div>
+          </div>
+
+          <!-- Kafka Headers Section -->
+          <div class="form-group">
+            <div class="headers-header">
+              <label class="form-label">Kafka Record Headers</label>
+              <button type="button" id="btn-add-header" class="btn-text">+ Add Header</button>
+            </div>
+            <div id="headers-list" class="headers-container">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Schema Studio & Preview -->
+    <div class="studio-column">
+      <!-- Presets Selector -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Payload Template Presets</h2>
+          <div class="preset-action-group">
+            <button type="button" id="btn-save-preset" class="btn-text">💾 Save Preset</button>
+          </div>
+        </div>
+        <div class="preset-chips-row" id="presets-chips">
+          <!-- Preset buttons inserted here -->
+        </div>
+      </div>
+
+      <!-- JSON Template Editor & Token Palette -->
+      <div class="panel editor-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">Mock Payload Template</h2>
+          <div class="editor-header-actions">
+            <button type="button" id="btn-format-json" class="btn-chip" title="Format JSON">Format</button>
+            <button type="button" id="btn-preview-payload" class="btn-primary-sm">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              Test Preview
+            </button>
+          </div>
+        </div>
+
+        <!-- Token Palette Bar -->
+        <div class="token-palette">
+          <span class="palette-title">Click to insert:</span>
+          <button type="button" class="token-chip" data-token="{{uuid}}">{{uuid}}</button>
+          <button type="button" class="token-chip" data-token="{{timestamp}}">{{timestamp}}</button>
+          <button type="button" class="token-chip" data-token="{{timestamp_iso}}">{{timestamp_iso}}</button>
+          <button type="button" class="token-chip" data-token="{{random_int(10, 1000)}}">{{random_int}}</button>
+          <button type="button" class="token-chip" data-token="{{random_float(10.5, 499.9, 2)}}">{{random_float}}</button>
+          <button type="button" class="token-chip" data-token="{{choose(['ACTIVE', 'PENDING', 'CANCELLED'])}}">{{choose}}</button>
+          <button type="button" class="token-chip" data-token="{{name}}">{{name}}</button>
+          <button type="button" class="token-chip" data-token="{{email}}">{{email}}</button>
+          <button type="button" class="token-chip" data-token="{{ipv4}}">{{ipv4}}</button>
+          <button type="button" class="token-chip" data-token="{{country_code}}">{{country_code}}</button>
+          <button type="button" class="token-chip" data-token="{{sequence}}">{{sequence}}</button>
+          <button type="button" class="token-chip" data-token="{{boolean}}">{{boolean}}</button>
+        </div>
+
+        <!-- Monospace Template Editor -->
+        <div class="editor-container">
+          <textarea id="template-editor" class="code-editor" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <!-- Preview Modal / Drawer -->
+      <div id="preview-box" class="preview-card hidden">
+        <div class="preview-header">
+          <span class="preview-title">Generated Payload Preview (3 Samples)</span>
+          <span id="preview-validation-badge" class="badge-valid">Valid JSON</span>
+          <button type="button" id="btn-close-preview" class="btn-icon">✕</button>
+        </div>
+        <div id="preview-samples-container" class="preview-samples">
+          <!-- Sample blocks dynamically injected -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Live Message Stream Inspector -->
+  <section class="stream-inspector">
+    <div class="inspector-header">
+      <div class="inspector-title-group">
+        <h3 class="inspector-title">Real-Time Kafka Event Stream</h3>
+        <span class="inspector-count" id="recent-count-tag">Latest 10 Dispatched Messages</span>
+      </div>
+      <div class="inspector-actions">
+        <label class="toggle-checkbox">
+          <input type="checkbox" id="chk-auto-scroll" checked>
+          <span>Auto-Scroll</span>
+        </label>
+        <button id="btn-clear-stream" class="btn-chip">Clear View</button>
+      </div>
+    </div>
+
+    <div class="inspector-body" id="event-stream-container">
+      <div class="empty-stream" id="empty-stream-placeholder">
+        <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="1.5" fill="none">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <p>No messages sent yet. Configure your parameters above and click <strong>Start Stream</strong>.</p>
+      </div>
+      <div id="messages-list" class="messages-grid"></div>
+    </div>
+  </section>
+
+  <!-- External Kafka UI Access Banner -->
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span>Powered by <strong>Rust + Axum + rdkafka + Tokio</strong> &amp; <strong>Apache Kafka</strong>.</span>
+      <div class="footer-links">
+        <a href="http://localhost:8080" target="_blank" rel="noopener noreferrer" class="link-tag">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          Open Kafka UI Dashboard (Port 8080)
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
