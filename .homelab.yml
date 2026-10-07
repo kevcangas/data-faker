@@ -1,5 +1,4 @@
 app_name: data-faker
-port: 3000
 services:
   - name: frontend
     container: streamforge-frontend
