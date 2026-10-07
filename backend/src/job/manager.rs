@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, watch, RwLock};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -130,14 +130,13 @@ struct SharedState {
 
 pub struct JobManager {
     shared: Arc<SharedState>,
-    stop_tx: watch::Sender<bool>,
+    stop_signal: RwLock<Option<Arc<AtomicBool>>>,
     stats_tx: broadcast::Sender<JobStats>,
     template_engine: Arc<TemplateEngine>,
 }
 
 impl JobManager {
     pub fn new() -> Self {
-        let (stop_tx, _) = watch::channel(false);
         let (stats_tx, _) = broadcast::channel(100);
 
         let shared = Arc::new(SharedState {
@@ -156,7 +155,7 @@ impl JobManager {
 
         let manager = Self {
             shared,
-            stop_tx,
+            stop_signal: RwLock::new(None),
             stats_tx,
             template_engine: Arc::new(TemplateEngine::new()),
         };
@@ -164,6 +163,7 @@ impl JobManager {
         manager.spawn_metrics_monitor();
         manager
     }
+
 
     pub fn subscribe_stats(&self) -> broadcast::Receiver<JobStats> {
         self.stats_tx.subscribe()
@@ -294,16 +294,16 @@ impl JobManager {
         self.shared.is_paused.store(false, Ordering::Relaxed);
         self.template_engine.reset_sequence();
 
-        let _ = self.stop_tx.send(false);
+        let stop_signal = Arc::new(AtomicBool::new(false));
+        *self.stop_signal.write().await = Some(Arc::clone(&stop_signal));
         *self.shared.status.write().await = JobStateEnum::Running;
 
         let shared_clone = Arc::clone(&self.shared);
-        let stop_rx = self.stop_tx.subscribe();
         let engine_clone = Arc::clone(&self.template_engine);
 
         // Spawn master job worker
         tokio::spawn(async move {
-            Self::run_job_loop(shared_clone, engine_clone, producer, config, stop_rx).await;
+            Self::run_job_loop(shared_clone, engine_clone, producer, config, stop_signal).await;
         });
 
         Ok(())
@@ -344,7 +344,9 @@ impl JobManager {
             return Ok(());
         }
 
-        let _ = self.stop_tx.send(true);
+        if let Some(signal) = self.stop_signal.read().await.as_ref() {
+            signal.store(true, Ordering::SeqCst);
+        }
         self.shared.is_paused.store(false, Ordering::SeqCst);
         *status = JobStateEnum::Stopped;
         info!("Job stopped by user.");
@@ -356,14 +358,18 @@ impl JobManager {
         engine: Arc<TemplateEngine>,
         producer: Arc<FutureProducer>,
         config: JobConfig,
-        stop_rx: watch::Receiver<bool>,
+        stop_signal: Arc<AtomicBool>,
     ) {
         info!("Starting Kafka data generation loop. Topic: {}", config.kafka.topic);
 
         let topic = config.kafka.topic.clone();
         let total_target = config.total_messages;
         let rate_mode = config.rate_limit.mode.clone();
-        let rate_value = config.rate_limit.value.max(0.1);
+        let rate_value = if config.rate_limit.value.is_finite() && config.rate_limit.value > 0.0 {
+            config.rate_limit.value
+        } else {
+            100.0
+        };
 
         // Calculate timing delay
         let delay_per_message = if rate_mode == "interval_ms" {
@@ -377,13 +383,14 @@ impl JobManager {
 
         loop {
             // Check stop signal
-            if *stop_rx.borrow() {
+            if stop_signal.load(Ordering::Relaxed) {
+                info!("Stop signal detected. Exiting loop.");
                 break;
             }
 
             // Check pause
             while shared.is_paused.load(Ordering::Relaxed) {
-                if *stop_rx.borrow() {
+                if stop_signal.load(Ordering::Relaxed) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -402,6 +409,7 @@ impl JobManager {
 
             // Generate payload
             info!("Rendering template for topic {}...", topic);
+
             let rendered_payload = engine.render(&config.payload_template);
 
             // Determine message key

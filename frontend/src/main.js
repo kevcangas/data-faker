@@ -506,15 +506,26 @@ function setupEventListeners() {
   el.btnPause.addEventListener('click', async () => {
     if (state.currentStatus === 'Running') {
       await pauseJob();
+      updateStatusBadge('Paused');
+      updateButtonsForStatus('Paused');
     } else if (state.currentStatus === 'Paused') {
       await resumeJob();
+      updateStatusBadge('Running');
+      updateButtonsForStatus('Running');
     }
+    const res = await getJobStatus();
+    if (res.data) handleStatsUpdate(res.data);
   });
 
   // Job Action: Stop
   el.btnStop.addEventListener('click', async () => {
     await stopJob();
+    updateStatusBadge('Stopped');
+    updateButtonsForStatus('Stopped');
+    const res = await getJobStatus();
+    if (res.data) handleStatsUpdate(res.data);
   });
+
 
   // Job Action: Reset
   el.btnReset.addEventListener('click', () => {
@@ -587,10 +598,18 @@ async function handleStartJob() {
     const res = await startJob(payload);
     if (!res.success) {
       showAlert(res.message || 'Failed to start stream.');
+    } else {
+      updateStatusBadge('Running');
+      updateButtonsForStatus('Running');
+      setTimeout(async () => {
+        const st = await getJobStatus();
+        if (st.data) handleStatsUpdate(st.data);
+      }, 200);
     }
   } catch (err) {
     showAlert('Could not reach backend: ' + err.message);
   }
+
 }
 
 // --- Preview Modal Display ---
