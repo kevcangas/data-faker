@@ -21,3 +21,10 @@ services:
     homepage: true
     icon: mdi-view-dashboard-outline
     description: "Kafka UI Cluster & Topic Inspector"
+  - name: kafka
+    container: streamforge-kafka
+    port: 9092
+    subdomain: kafka
+    homepage: false
+    icon: si-apachekafka
+    description: "Apache Kafka KRaft Message Broker"
