@@ -24,6 +24,7 @@ services:
   - name: kafka
     container: streamforge-kafka
     port: 9092
+    protocol: tcp
     subdomain: kafka
     publish_port: true
     host_port: 9092
