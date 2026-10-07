@@ -1,0 +1,24 @@
+app_name: data-faker
+port: 3000
+services:
+  - name: frontend
+    container: streamforge-frontend
+    port: 3000
+    subdomain: data-faker
+    homepage: true
+    icon: si-apachekafka
+    description: "StreamForge: High-Efficiency Kafka Mock Data Generator & Telemetry Dashboard"
+  - name: backend
+    container: streamforge-backend
+    port: 5000
+    subdomain: api-data-faker
+    homepage: false
+    icon: si-rust
+    description: "Rust Async Mock Streaming Engine & REST API"
+  - name: kafka-ui
+    container: streamforge-kafka-ui
+    port: 8080
+    subdomain: kafka-data-faker
+    homepage: true
+    icon: mdi-view-dashboard-outline
+    description: "Kafka UI Cluster & Topic Inspector"

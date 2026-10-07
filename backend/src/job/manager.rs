@@ -120,12 +120,47 @@ struct SharedState {
     failed_count: AtomicU64,
     target_count: RwLock<Option<u64>>,
     current_rate: RwLock<f64>,
-    start_time: RwLock<Option<Instant>>,
-    paused_duration: RwLock<Duration>,
-    last_pause_time: RwLock<Option<Instant>>,
+    active_duration: RwLock<Duration>,
+    current_segment_start: RwLock<Option<Instant>>,
     last_error: RwLock<Option<String>>,
     recent_messages: RwLock<VecDeque<ProducedMessageSample>>,
     is_paused: AtomicBool,
+}
+
+impl SharedState {
+    async fn calculate_elapsed(&self) -> f64 {
+        let base = *self.active_duration.read().await;
+        let running_segment = if let Some(start) = *self.current_segment_start.read().await {
+            start.elapsed()
+        } else {
+            Duration::ZERO
+        };
+        (base + running_segment).as_secs_f64()
+    }
+
+    async fn pause_timer(&self) {
+        if let Some(start) = self.current_segment_start.write().await.take() {
+            let mut active = self.active_duration.write().await;
+            *active += start.elapsed();
+        }
+    }
+
+    async fn resume_timer(&self) {
+        let mut segment = self.current_segment_start.write().await;
+        *segment = Some(Instant::now());
+    }
+
+    async fn stop_timer(&self) {
+        if let Some(start) = self.current_segment_start.write().await.take() {
+            let mut active = self.active_duration.write().await;
+            *active += start.elapsed();
+        }
+    }
+
+    async fn reset_timer(&self) {
+        *self.active_duration.write().await = Duration::ZERO;
+        *self.current_segment_start.write().await = None;
+    }
 }
 
 pub struct JobManager {
@@ -145,9 +180,8 @@ impl JobManager {
             failed_count: AtomicU64::new(0),
             target_count: RwLock::new(None),
             current_rate: RwLock::new(0.0),
-            start_time: RwLock::new(None),
-            paused_duration: RwLock::new(Duration::ZERO),
-            last_pause_time: RwLock::new(None),
+            active_duration: RwLock::new(Duration::ZERO),
+            current_segment_start: RwLock::new(None),
             last_error: RwLock::new(None),
             recent_messages: RwLock::new(VecDeque::with_capacity(10)),
             is_paused: AtomicBool::new(false),
@@ -164,7 +198,6 @@ impl JobManager {
         manager
     }
 
-
     pub fn subscribe_stats(&self) -> broadcast::Receiver<JobStats> {
         self.stats_tx.subscribe()
     }
@@ -177,18 +210,7 @@ impl JobManager {
         let current_rate = *self.shared.current_rate.read().await;
         let last_error = self.shared.last_error.read().await.clone();
         let recent = self.shared.recent_messages.read().await.iter().cloned().collect();
-
-        let elapsed = if let Some(start) = *self.shared.start_time.read().await {
-            let total = start.elapsed();
-            let paused = *self.shared.paused_duration.read().await;
-            if total > paused {
-                (total - paused).as_secs_f64()
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
+        let elapsed = self.shared.calculate_elapsed().await;
 
         JobStats {
             status: status.as_str().to_string(),
@@ -240,18 +262,7 @@ impl JobManager {
                 let current_rate = *shared.current_rate.read().await;
                 let last_error = shared.last_error.read().await.clone();
                 let recent = shared.recent_messages.read().await.iter().cloned().collect();
-
-                let elapsed = if let Some(start) = *shared.start_time.read().await {
-                    let total = start.elapsed();
-                    let paused = *shared.paused_duration.read().await;
-                    if total > paused {
-                        (total - paused).as_secs_f64()
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                };
+                let elapsed = shared.calculate_elapsed().await;
 
                 let stats = JobStats {
                     status: status.as_str().to_string(),
@@ -268,6 +279,7 @@ impl JobManager {
             }
         });
     }
+
 
     pub async fn start_job(&self, config: JobConfig) -> Result<(), String> {
         {
@@ -286,9 +298,8 @@ impl JobManager {
         self.shared.sent_count.store(0, Ordering::Relaxed);
         self.shared.failed_count.store(0, Ordering::Relaxed);
         *self.shared.target_count.write().await = config.total_messages;
-        *self.shared.start_time.write().await = Some(Instant::now());
-        *self.shared.paused_duration.write().await = Duration::ZERO;
-        *self.shared.last_pause_time.write().await = None;
+        self.shared.reset_timer().await;
+        self.shared.resume_timer().await;
         *self.shared.last_error.write().await = None;
         self.shared.recent_messages.write().await.clear();
         self.shared.is_paused.store(false, Ordering::Relaxed);
@@ -315,7 +326,7 @@ impl JobManager {
             return Err("Cannot pause: Job is not currently running.".to_string());
         }
         self.shared.is_paused.store(true, Ordering::SeqCst);
-        *self.shared.last_pause_time.write().await = Some(Instant::now());
+        self.shared.pause_timer().await;
         *status = JobStateEnum::Paused;
         info!("Job paused.");
         Ok(())
@@ -327,11 +338,7 @@ impl JobManager {
             return Err("Cannot resume: Job is not paused.".to_string());
         }
 
-        if let Some(pause_start) = *self.shared.last_pause_time.read().await {
-            let mut paused_dur = self.shared.paused_duration.write().await;
-            *paused_dur += pause_start.elapsed();
-        }
-        *self.shared.last_pause_time.write().await = None;
+        self.shared.resume_timer().await;
         self.shared.is_paused.store(false, Ordering::SeqCst);
         *status = JobStateEnum::Running;
         info!("Job resumed.");
@@ -348,6 +355,7 @@ impl JobManager {
             signal.store(true, Ordering::SeqCst);
         }
         self.shared.is_paused.store(false, Ordering::SeqCst);
+        self.shared.stop_timer().await;
         *status = JobStateEnum::Stopped;
         info!("Job stopped by user.");
         Ok(())
@@ -385,12 +393,14 @@ impl JobManager {
             // Check stop signal
             if stop_signal.load(Ordering::Relaxed) {
                 info!("Stop signal detected. Exiting loop.");
+                shared.stop_timer().await;
                 break;
             }
 
             // Check pause
             while shared.is_paused.load(Ordering::Relaxed) {
                 if stop_signal.load(Ordering::Relaxed) {
+                    shared.stop_timer().await;
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -402,6 +412,7 @@ impl JobManager {
                 if sent_so_far >= target {
                     let mut st = shared.status.write().await;
                     *st = JobStateEnum::Completed;
+                    shared.stop_timer().await;
                     info!("Target count of {} messages reached. Job completed.", target);
                     break;
                 }

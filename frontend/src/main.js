@@ -576,7 +576,7 @@ async function handleStartJob() {
 
   const payload = {
     kafka: {
-      bootstrap_servers: el.inputBootstrapServers.value.trim() || 'kafka:9092',
+      bootstrap_servers: el.inputBootstrapServers.value.trim() || 'kafka:29092',
       topic: el.inputTopic.value.trim() || 'mock-events',
       acks: el.selectAcks.value,
       compression: el.selectCompression.value,

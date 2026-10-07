@@ -66,11 +66,111 @@ docker compose up --build -d
 | **Web Dashboard** | **http://localhost:3000** | Interactive control center & payload studio |
 | **Kafka UI** | **http://localhost:8080** | Web UI to inspect topics, partitions & records |
 | **Rust Backend API** | **http://localhost:5000** | REST API & SSE telemetry endpoints |
-| **Kafka Broker** | `localhost:9092` (Host) / `kafka:9092` (Docker) | Apache Kafka 3.8.0 KRaft cluster |
+| **Kafka Broker (Internal)** | `kafka:29092` | Used inside Docker network |
+| **Kafka Broker (External)** | `192.168.1.100:9092` / `localhost:9092` | Used by external consumers (Apache Flink, other PCs) |
 
 To stop the services:
 ```bash
 docker compose down
+```
+
+### 🌐 Connecting External Consumers (Apache Flink, Spark, etc.)
+
+StreamForge exposes Kafka on port `9092` with advertised listeners mapped to your machine's LAN IP (`192.168.1.100`), allowing consumers on other computers across your local network to stream events in real time.
+
+#### 1. Network & Firewall Prerequisites
+On the host Windows PC running StreamForge, allow inbound connections on port `9092` (run PowerShell as Administrator):
+```powershell
+New-NetFirewallRule -DisplayName "Kafka 9092 LAN Inbound" -Direction Inbound -LocalPort 9092 -Protocol TCP -Action Allow
+```
+Verify reachability from the remote computer:
+```bash
+curl -v telnet://192.168.1.100:9092
+# Or: nc -zv 192.168.1.100 9092
+```
+
+---
+
+#### 2. Apache Flink Integration Examples
+
+##### Option A: Flink SQL (Table API / SQL Client)
+```sql
+-- Define Kafka source table
+CREATE TABLE streamforge_orders (
+    order_id STRING,
+    customer STRING,
+    amount DOUBLE,
+    `timestamp` BIGINT,
+    proctime AS PROCTIME()
+) WITH (
+    'connector' = 'kafka',
+    'topic' = 'ecommerce-orders',
+    'properties.bootstrap.servers' = '192.168.1.100:9092',
+    'properties.group.id' = 'flink-sql-consumer',
+    'scan.startup.mode' = 'latest-offset',
+    'format' = 'json',
+    'json.fail-on-missing-field' = 'false',
+    'json.ignore-parse-errors' = 'true'
+);
+
+-- Continuous tumbling window aggregation
+SELECT 
+    customer,
+    COUNT(*) AS total_orders,
+    ROUND(SUM(amount), 2) AS total_revenue
+FROM streamforge_orders
+GROUP BY customer;
+```
+
+##### Option B: PyFlink (Python)
+```python
+from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.datastream.connectors.kafka import KafkaSource, KafkaOffsetsInitializer
+from pyflink.common.serialization import SimpleStringSchema
+from pyflink.common.watermark_strategy import WatermarkStrategy
+
+env = StreamExecutionEnvironment.get_execution_environment()
+
+kafka_source = KafkaSource.builder() \
+    .set_bootstrap_servers("192.168.1.100:9092") \
+    .set_topics("ecommerce-orders") \
+    .set_group_id("pyflink-streamforge-group") \
+    .set_starting_offsets(KafkaOffsetsInitializer.latest()) \
+    .set_value_only_deserializer(SimpleStringSchema()) \
+    .build()
+
+stream = env.from_source(kafka_source, WatermarkStrategy.no_watermarks(), "StreamForgeKafkaSource")
+stream.print()
+
+env.execute("StreamForge Flink Ingestion")
+```
+
+##### Option C: Java / Scala (DataStream API)
+```java
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.connector.kafka.source.KafkaSource;
+import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+public class StreamForgeFlinkConsumer {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        KafkaSource<String> source = KafkaSource.<String>builder()
+            .setBootstrapServers("192.168.1.100:9092")
+            .setTopics("ecommerce-orders")
+            .setGroupId("flink-java-group")
+            .setStartingOffsets(OffsetsInitializer.latest())
+            .setValueOnlyDeserializer(new SimpleStringSchema())
+            .build();
+
+        env.fromSource(source, WatermarkStrategy.noWatermarks(), "StreamForge Source")
+           .print();
+
+        env.execute("StreamForge Kafka Pipeline");
+    }
+}
 ```
 
 ---
