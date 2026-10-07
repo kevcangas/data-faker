@@ -1,7 +1,5 @@
-// When running in Docker behind proxy or standard localhost, use relative or env-based backend URL
-const API_BASE = window.location.port === '3000' 
-  ? `http://${window.location.hostname}:5000` 
-  : '';
+// Use relative path for all requests to route through Nginx reverse proxy (same-origin)
+const API_BASE = '';
 
 export async function testKafkaConnection(bootstrapServers) {
   const res = await fetch(`${API_BASE}/api/kafka/test-connection`, {
@@ -68,9 +66,19 @@ export function subscribeToStats(onMessage, onError) {
     }
   });
 
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onMessage(data);
+    } catch (e) {
+      console.error('Failed to parse SSE payload', e);
+    }
+  };
+
   eventSource.onerror = (err) => {
     if (onError) onError(err);
   };
 
   return eventSource;
 }
+

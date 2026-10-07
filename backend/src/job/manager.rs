@@ -401,6 +401,7 @@ impl JobManager {
             }
 
             // Generate payload
+            info!("Rendering template for topic {}...", topic);
             let rendered_payload = engine.render(&config.payload_template);
 
             // Determine message key
@@ -442,7 +443,10 @@ impl JobManager {
                 record = record.key(k);
             }
 
+            info!("Calling producer.send to topic {} with key {:?}", topic, key_ref);
             let send_result = producer.send(record, Duration::from_secs(5)).await;
+            info!("producer.send completed with is_ok={}", send_result.is_ok());
+
 
             match send_result {
                 Ok((partition, offset)) => {

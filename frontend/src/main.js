@@ -102,13 +102,14 @@ function init() {
     console.warn('SSE stream disconnected, polling fallback active', err);
   });
 
-  // Background fallback poll every 3 seconds
+  // Background fallback poll every 1 second
   setInterval(async () => {
     try {
       const res = await getJobStatus();
       if (res.data) handleStatsUpdate(res.data);
     } catch (_) {}
-  }, 3000);
+  }, 1000);
+
 }
 
 // --- Presets Management ---
