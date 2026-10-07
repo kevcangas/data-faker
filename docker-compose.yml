@@ -50,11 +50,6 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-    networks:
-      default:
-        aliases:
-          - backend
-          - streamforge-backend
 
   frontend:
     build:
@@ -64,12 +59,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - backend
-    networks:
-      default:
-        aliases:
-          - frontend
-          - streamforge-frontend
+      backend:
+        condition: service_started
 
 networks:
   default:
